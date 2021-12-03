@@ -52,6 +52,7 @@ mod rank;
 mod row_number;
 mod sum;
 mod try_cast;
+pub mod count_fly;
 
 /// Module with some convenient methods used in expression building
 pub mod helpers {

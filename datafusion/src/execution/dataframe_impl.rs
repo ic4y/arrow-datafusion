@@ -32,9 +32,7 @@ use crate::{
 };
 
 use crate::arrow::util::pretty;
-use crate::physical_plan::{
-    execute_stream, execute_stream_partitioned, ExecutionPlan, SendableRecordBatchStream,
-};
+use crate::physical_plan::{displayable, execute_stream, execute_stream_partitioned, ExecutionPlan, SendableRecordBatchStream};
 use crate::sql::utils::find_window_exprs;
 use async_trait::async_trait;
 
@@ -162,6 +160,10 @@ impl DataFrame for DataFrameImpl {
     /// execute it, collecting all resulting batches into memory
     async fn collect(&self) -> Result<Vec<RecordBatch>> {
         let plan = self.create_physical_plan().await?;
+        println!(
+            "=== Physical plan with optimize ===\n{}\n",
+            displayable(plan.as_ref()).indent().to_string()
+        );
         Ok(collect(plan).await?)
     }
 

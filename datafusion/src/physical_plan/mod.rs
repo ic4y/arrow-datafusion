@@ -603,6 +603,58 @@ pub trait Accumulator: Send + Sync + Debug {
     fn evaluate(&self) -> Result<ScalarValue>;
 }
 
+
+pub trait AccumulatorFly: Send + Sync + Debug {
+    /// Initializes the state for a new group with a `index`
+    fn init_state(&mut self, index: usize);
+
+    /// Returns the state of the accumulator at the end of the accumulation.
+    // in the case of an average on which we track `sum` and `n`, this function should return a vector
+    // of two values, sum and n.
+    fn state(&self, index: usize) -> Result<Vec<ScalarValue>>;
+
+    fn state_all(&self) -> Result<Vec<Vec<ScalarValue>>>;
+
+    /// updates the accumulator's state from a vector of scalars.
+    fn update(&mut self, index: usize, values: &[ScalarValue]) -> Result<()>;
+
+    /// updates the accumulator's state from a vector of arrays.
+    fn update_batch(&mut self, index: usize, values: &[ArrayRef]) -> Result<()> {
+        if values.is_empty() {
+            return Ok(());
+        };
+        (0..values[0].len()).try_for_each(|idx| {
+            let v = values
+                .iter()
+                .map(|array| ScalarValue::try_from_array(array, idx))
+                .collect::<Result<Vec<_>>>()?;
+            self.update(index, &v)
+        })
+    }
+
+    /// updates the accumulator's state from a vector of scalars.
+    fn merge(&mut self, index: usize, states: &[ScalarValue]) -> Result<()>;
+
+    /// updates the accumulator's state from a vector of states.
+    fn merge_batch(&mut self, index: usize, states: &[ArrayRef]) -> Result<()> {
+        if states.is_empty() {
+            return Ok(());
+        };
+        (0..states[0].len()).try_for_each(|idx| {
+            let v = states
+                .iter()
+                .map(|array| ScalarValue::try_from_array(array, index))
+                .collect::<Result<Vec<_>>>()?;
+            self.merge(index, &v)
+        })
+    }
+
+    /// returns its value based on its current state.
+    fn evaluate(&self, index: usize) -> Result<ScalarValue>;
+
+    fn evaluate_all(&self) -> Result<ArrayRef>;
+}
+
 pub mod aggregates;
 pub mod analyze;
 pub mod array_expressions;
@@ -622,6 +674,7 @@ pub mod file_format;
 pub mod filter;
 pub mod functions;
 pub mod hash_aggregate;
+pub mod hash_aggregate_fly;
 pub mod hash_join;
 pub mod hash_utils;
 pub(crate) mod hyperloglog;
@@ -648,3 +701,4 @@ pub mod union;
 pub mod values;
 pub mod window_functions;
 pub mod windows;
+
