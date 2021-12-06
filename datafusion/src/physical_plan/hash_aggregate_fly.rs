@@ -18,6 +18,7 @@
 //! Defines the execution plan for the hash aggregate operation
 use chrono::prelude::*;
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::vec;
@@ -51,6 +52,7 @@ use pin_project_lite::pin_project;
 
 use async_trait::async_trait;
 use crate::physical_plan::hash_aggregate::AggregateMode;
+use crate::physical_plan::metrics::{MetricValue, Time};
 
 use super::common::AbortOnDropSingle;
 use super::metrics::{
@@ -340,14 +342,22 @@ fn group_aggregate_batch(
     batch: RecordBatch,
     mut accumulators: Accumulators,
     aggregate_expressions: &[Vec<Arc<dyn PhysicalExpr>>],
+    mytimes : &[Time;14],
 ) -> Result<Accumulators> {
     // evaluate the grouping expressions
+    let guard = mytimes[0].timer();
     let group_values = evaluate(group_expr, &batch)?;
+    guard.done();
+
+    //储存index
+    let mut batch_indices:HashMap<usize,Vec<u32>> =  HashMap::new();
 
     // evaluate the aggregation expressions.
     // We could evaluate them after the `take`, but since we need to evaluate all
     // of them anyways, it is more performant to do it while they are together.
+    let guard = mytimes[1].timer();
     let aggr_input_values = evaluate_many(aggregate_expressions, &batch)?;
+    guard.done();
 
     // 1.1 construct the key from the group values
     // 1.2 construct the mapping key if it does not exist
@@ -355,64 +365,80 @@ fn group_aggregate_batch(
 
     // track which entries in `accumulators` have rows in this batch to aggregate
     let mut groups_with_rows = vec![];
-
     // 1.1 Calculate the group keys for the group values
     let mut batch_hashes = vec![0; batch.num_rows()];
 
-    let dt = Local::now();
+    // let dt = Local::now();
+    let guard = mytimes[2].timer();
     create_hashes(&group_values, random_state, &mut batch_hashes)?;
-    println!(
-        "batch_hashes usage millis: {}。",
-        Local::now().timestamp_millis() - dt.timestamp_millis(),
-    );
+    guard.done();
+    // println!(
+    //     "batch_hashes usage millis: {}。",
+    //     Local::now().timestamp_millis() - dt.timestamp_millis(),
+    // );
 
 
 
     for (row, hash) in batch_hashes.into_iter().enumerate() {
-        let Accumulators { map,accumulator_items, group_states } = &mut accumulators;
+        let Accumulators { map, accumulator_items,group_by_values} = &mut accumulators;
 
+        let guard = mytimes[10].timer();
         let entry = map.get_mut(hash, |(_hash, group_idx)| {
-            // verify that a group that we are inserting with hash is
-            // actually the same key value as the group in
-            // existing_idx  (aka group_values @ row)
-            let group_state = &group_states[*group_idx];
+            let group_state_c = &group_by_values[*group_idx];
             group_values
                 .iter()
-                .zip(group_state.group_by_values.iter())
+                .zip(group_state_c.iter())
                 .all(|(array, scalar)| scalar.eq_array(array, row))
         });
+        guard.done();
 
         match entry {
             // Existing entry for this group value
             Some((_hash, group_idx)) => {
-                let group_state = &mut group_states[*group_idx];
-                // 1.3
-                if group_state.indices.is_empty() {
+                let guard = mytimes[3].timer();
+                let x = batch_indices.contains_key(&group_idx.clone());
+                guard.done();
+                if(x){
+                    let guard = mytimes[4].timer();
+                    let x1 = batch_indices.get_mut(&group_idx.clone()).unwrap();
+                    guard.done();
+                    let guard = mytimes[5].timer();
+                    x1.push(row as u32);
+                    guard.done();
+                }else{
+                    let guard1 = mytimes[6].timer();
                     groups_with_rows.push(*group_idx);
-                };
-                group_state.indices.push(row as u32); // remember this row
+                    guard1.done();
+                    let guard2 = mytimes[7].timer();
+                    let vec1 = vec![row as u32];
+                    guard2.done();
+                    let guard2 = mytimes[8].timer();
+                    batch_indices.insert(*group_idx,vec1);
+                    guard2.done();
+                }
             }
             //  1.2 Need to create new entry
             None => {
+                let guard = mytimes[9].timer();
+
                 // Copy group values out of arrays into `ScalarValue`s
-                let group_by_values = group_values
+                let col_group_by_values = group_values
                     .iter()
                     .map(|col| ScalarValue::try_from_array(col, row))
                     .collect::<Result<Vec<_>>>()?;
 
-                // Add new entry to group_states and save newly created index
-                let group_state = GroupState {
-                    group_by_values: group_by_values.into_boxed_slice(),
-                    indices: vec![row as u32], // 1.3
-                };
-                let group_idx = group_states.len();
+
+                let group_idx = group_by_values.len();
+                group_by_values.push(col_group_by_values);
+
                 //TODO 这个地方需要给每个agg的状态初始化
                 accumulator_items[0].init_state(group_idx);
-                group_states.push(group_state);
                 groups_with_rows.push(group_idx);
+                batch_indices.insert(group_idx,vec![row as u32]);
 
                 // for hasher function, use precomputed hash value
                 map.insert(hash, (hash, group_idx), |(hash, _group_idx)| *hash);
+                guard.done()
             }
         };
     }
@@ -421,17 +447,20 @@ fn group_aggregate_batch(
 
 
     // Collect all indices + offsets based on keys in this vec
-    let mut batch_indices: UInt32Builder = UInt32Builder::new(0);
+    let guard = mytimes[11].timer();
+    let mut batch_indices_cc: UInt32Builder = UInt32Builder::new(0);
     let mut offsets = vec![0];
     let mut offset_so_far = 0;
     for group_idx in groups_with_rows.iter() {
-        let indices = &accumulators.group_states[*group_idx].indices;
-        batch_indices.append_slice(indices)?;
+        let indices = batch_indices.get(group_idx).unwrap();
+        batch_indices_cc.append_slice(indices)?;
         offset_so_far += indices.len();
         offsets.push(offset_so_far);
     }
-    let batch_indices = batch_indices.finish();
+    let batch_indices = batch_indices_cc.finish();
+    guard.done();
 
+    let guard = mytimes[12].timer();
     // `Take` all values based on indices into Arrays
     let values: Vec<Vec<Arc<dyn Array>>> = aggr_input_values
         .iter()
@@ -450,6 +479,7 @@ fn group_aggregate_batch(
             // 2.3
         })
         .collect();
+    guard.done();
 
     // 2.1 for each key in this batch
     // 2.2 for each aggregation
@@ -457,13 +487,12 @@ fn group_aggregate_batch(
     // 2.4 update / merge the accumulator with the values
     // 2.5 clear indices
 
-
+    let guard3 = mytimes[13].timer();
     groups_with_rows
         .iter()
         .zip(offsets.windows(2))
         .try_for_each(|(group_idx, offsets)| {
             //TODO 这个地方可能会有性能问题
-            let group_state = &mut accumulators.group_states[*group_idx];
             accumulators.accumulator_items
                 .iter_mut()
                 .zip(values.iter())
@@ -486,12 +515,8 @@ fn group_aggregate_batch(
                         accumulator.merge_batch(*group_idx,&values)
                     }
                 })
-                .and({
-                    group_state.indices.clear();
-                    Ok(())
-                })
         })?;
-
+    guard3.done();
     Ok(accumulators)
 }
 
@@ -520,6 +545,9 @@ async fn compute_grouped_hash_aggregate(
     let dt = Local::now();
     let mut i = 0;
 
+
+    let mytimes = [Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new()];
+
     while let Some(batch) = input.next().await {
         i +=1;
         let batch = batch?;
@@ -532,6 +560,7 @@ async fn compute_grouped_hash_aggregate(
             batch,
             accumulators,
             &aggregate_expressions,
+            &mytimes
         )
             .map_err(DataFusionError::into_arrow_external_error)?;
         timer.done();
@@ -541,6 +570,10 @@ async fn compute_grouped_hash_aggregate(
         Local::now().timestamp_millis() - dt.timestamp_millis(),
         i
     );
+    for i in 0..mytimes.len() {
+        println!("i : {}, time : {}", i , mytimes[i]);
+    }
+    println!("--------------------");
 
     let timer = elapsed_compute.timer();
     let batch = create_batch_from_map(&mode, &accumulators, group_expr.len(), &schema);
@@ -617,18 +650,8 @@ struct Accumulators {
     accumulator_items: Vec<AccumulatorItem>,
 
     /// State for each group
-    group_states: Vec<GroupState>,
-}
-
-impl std::fmt::Debug for Accumulators {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // hashes are not store inline, so could only get values
-        let map_string = "RawTable";
-        f.debug_struct("Accumulators")
-            .field("map", &map_string)
-            .field("group_states", &self.group_states)
-            .finish()
-    }
+    //group_states: Vec<GroupState>,
+    group_by_values: Vec<Vec<ScalarValue>>,
 }
 
 impl Stream for GroupedHashAggregateStream {
@@ -896,7 +919,7 @@ fn create_batch_from_map(
     num_group_expr: usize,
     output_schema: &Schema,
 ) -> ArrowResult<RecordBatch> {
-    if accumulators.group_states.is_empty() {
+    if accumulators.group_by_values.is_empty() {
         return Ok(RecordBatch::new_empty(Arc::new(output_schema.to_owned())));
     }
     let accs = &accumulators.accumulator_items;
@@ -921,9 +944,9 @@ fn create_batch_from_map(
         .map(|i| {
             ScalarValue::iter_to_array(
                 accumulators
-                    .group_states
+                    .group_by_values
                     .iter()
-                    .map(|group_state| group_state.group_by_values[i].clone()),
+                    .map(|values| values[i].clone()),
             )
         })
         .collect::<Result<Vec<_>>>()

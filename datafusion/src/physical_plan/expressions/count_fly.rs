@@ -197,17 +197,11 @@ impl AccumulatorFly for CountAccumulatorFly {
     }
 
     fn evaluate_all(&self) -> Result<ArrayRef> {
-        let dt = Local::now();
         let result = ScalarValue::iter_to_array(
             self.count.iter().map(|x| {
                 ScalarValue::UInt64(Some(*x))
             }),
         );
-        println!(
-            "evaluate_all usage millis: {}",
-            Local::now().timestamp_millis() - dt.timestamp_millis()
-        );
-
         result
     }
 

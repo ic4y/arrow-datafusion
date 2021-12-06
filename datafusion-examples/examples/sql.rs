@@ -41,8 +41,8 @@ use chrono::prelude::*;
 /// fetching results
 #[tokio::main]
 async fn main() -> Result<()> {
-    //let parquet_path = "/Users/liliu/Desktop/lineorder_flat_2";
-    let parquet_path = "/Users/liliu/Downloads/parquet_10/lineorder_flat";
+    let parquet_path = "/Users/liliu/Desktop/lineorder_flat_2";
+    //let parquet_path = "/Users/liliu/Downloads/parquet_10/lineorder_flat";
     //let parquet_path = "/Users/liliu/Desktop/export_profile";
 
     let execution_config = ExecutionConfig::new().with_optimizer_rules(vec![
@@ -67,8 +67,8 @@ async fn main() -> Result<()> {
     //let sql = "select sum(revenue) from (SELECT sum(LO_EXTENDEDPRICE) AS revenue  FROM lineorder_1 group by S_ADDRESS) a";
     //let sql = "select sum(revenue) from (SELECT sum(lo_extendedprice) AS revenue  FROM lineorder_1 group by lo_orderpriority) a";
     //let sql = "select * from lineorder_1";
-    //let sql = "SELECT count(s_address) FROM lineorder_1 group by lo_orderpriority";
-    let sql = "SELECT count(LO_EXTENDEDPRICE) FROM lineorder_1 group by S_ADDRESS";
+    let sql = "SELECT lo_orderpriority,count(s_address) FROM lineorder_1 group by lo_orderpriority";
+    //let sql = "SELECT count(LO_EXTENDEDPRICE) FROM lineorder_1 group by S_ADDRESS";
     //let sql = "SELECT count(S_ADDRESS) FROM lineorder_1 group by LO_ORDERPRIORITY";
 
     let dt = Local::now();
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
 
     let results: Vec<RecordBatch> = df.collect().await?;
 
-    //print_batches(&results)?;
+    print_batches(&results)?;
 
     println!(
         "usage millis: {}",
