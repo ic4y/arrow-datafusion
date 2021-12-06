@@ -349,9 +349,6 @@ fn group_aggregate_batch(
     let group_values = evaluate(group_expr, &batch)?;
     guard.done();
 
-    //储存index
-    let mut batch_indices:HashMap<usize,Vec<u32>> =  HashMap::new();
-
     // evaluate the aggregation expressions.
     // We could evaluate them after the `take`, but since we need to evaluate all
     // of them anyways, it is more performant to do it while they are together.
@@ -372,15 +369,9 @@ fn group_aggregate_batch(
     let guard = mytimes[2].timer();
     create_hashes(&group_values, random_state, &mut batch_hashes)?;
     guard.done();
-    // println!(
-    //     "batch_hashes usage millis: {}。",
-    //     Local::now().timestamp_millis() - dt.timestamp_millis(),
-    // );
-
-
 
     for (row, hash) in batch_hashes.into_iter().enumerate() {
-        let Accumulators { map, accumulator_items,group_by_values} = &mut accumulators;
+        let Accumulators { map, accumulator_items,group_by_values, group_indices } = &mut accumulators;
 
         let guard = mytimes[10].timer();
         let entry = map.get_mut(hash, |(_hash, group_idx)| {
@@ -395,31 +386,15 @@ fn group_aggregate_batch(
         match entry {
             // Existing entry for this group value
             Some((_hash, group_idx)) => {
-                let guard = mytimes[3].timer();
-                let x = batch_indices.contains_key(&group_idx.clone());
-                guard.done();
-                if(x){
-                    let guard = mytimes[4].timer();
-                    let x1 = batch_indices.get_mut(&group_idx.clone()).unwrap();
-                    guard.done();
-                    let guard = mytimes[5].timer();
-                    x1.push(row as u32);
-                    guard.done();
-                }else{
-                    let guard1 = mytimes[6].timer();
+                let indices = &mut group_indices[*group_idx];
+                // 1.3
+                if indices.is_empty() {
                     groups_with_rows.push(*group_idx);
-                    guard1.done();
-                    let guard2 = mytimes[7].timer();
-                    let vec1 = vec![row as u32];
-                    guard2.done();
-                    let guard2 = mytimes[8].timer();
-                    batch_indices.insert(*group_idx,vec1);
-                    guard2.done();
-                }
+                };
+                indices.push(row as u32); // remember this row
             }
             //  1.2 Need to create new entry
             None => {
-                let guard = mytimes[9].timer();
 
                 // Copy group values out of arrays into `ScalarValue`s
                 let col_group_by_values = group_values
@@ -434,11 +409,11 @@ fn group_aggregate_batch(
                 //TODO 这个地方需要给每个agg的状态初始化
                 accumulator_items[0].init_state(group_idx);
                 groups_with_rows.push(group_idx);
-                batch_indices.insert(group_idx,vec![row as u32]);
+                group_indices.push(vec![row as u32]);
 
                 // for hasher function, use precomputed hash value
                 map.insert(hash, (hash, group_idx), |(hash, _group_idx)| *hash);
-                guard.done()
+
             }
         };
     }
@@ -452,7 +427,7 @@ fn group_aggregate_batch(
     let mut offsets = vec![0];
     let mut offset_so_far = 0;
     for group_idx in groups_with_rows.iter() {
-        let indices = batch_indices.get(group_idx).unwrap();
+        let indices = &accumulators.group_indices[*group_idx];
         batch_indices_cc.append_slice(indices)?;
         offset_so_far += indices.len();
         offsets.push(offset_so_far);
@@ -486,36 +461,28 @@ fn group_aggregate_batch(
     // 2.3 `slice` from each of its arrays the keys' values
     // 2.4 update / merge the accumulator with the values
     // 2.5 clear indices
-
     let guard3 = mytimes[13].timer();
-    groups_with_rows
-        .iter()
+    groups_with_rows.iter()
         .zip(offsets.windows(2))
         .try_for_each(|(group_idx, offsets)| {
-            //TODO 这个地方可能会有性能问题
-            accumulators.accumulator_items
-                .iter_mut()
+            accumulators.group_indices[*group_idx].clear();
+            accumulators.accumulator_items.iter_mut()
                 .zip(values.iter())
-                .map(|(accumulator, aggr_array)| {
-                    (
-                        accumulator,
-                        aggr_array
-                            .iter()
-                            .map(|array| {
-                                // 2.3
-                                array.slice(offsets[0], offsets[1] - offsets[0])
-                            })
-                            .collect::<Vec<ArrayRef>>(),
-                    )
-                })
-                .try_for_each(|(accumulator, values)| match mode {
-                    AggregateMode::Partial => accumulator.update_batch(*group_idx,&values),
-                    AggregateMode::FinalPartitioned | AggregateMode::Final => {
-                        // note: the aggregation here is over states, not values, thus the merge
-                        accumulator.merge_batch(*group_idx,&values)
+                .try_for_each(|(accumulator, aggr_array)| {
+                    let values = aggr_array
+                        .iter()
+                        .map(|array| {
+                            array.slice(offsets[0], offsets[1] - offsets[0])
+                        })
+                        .collect::<Vec<ArrayRef>>();
+                    match mode {
+                        AggregateMode::Partial => accumulator.update_batch(*group_idx, &values),
+                        AggregateMode::FinalPartitioned | AggregateMode::Final => {
+                            accumulator.merge_batch(*group_idx, &values)
+                        }
                     }
-                })
-        })?;
+            })
+        });
     guard3.done();
     Ok(accumulators)
 }
@@ -652,6 +619,8 @@ struct Accumulators {
     /// State for each group
     //group_states: Vec<GroupState>,
     group_by_values: Vec<Vec<ScalarValue>>,
+
+    group_indices : Vec<Vec<u32>>,
 }
 
 impl Stream for GroupedHashAggregateStream {

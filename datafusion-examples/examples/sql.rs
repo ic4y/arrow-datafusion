@@ -41,52 +41,62 @@ use chrono::prelude::*;
 /// fetching results
 #[tokio::main]
 async fn main() -> Result<()> {
-    let parquet_path = "/Users/liliu/Desktop/lineorder_flat_2";
-    //let parquet_path = "/Users/liliu/Downloads/parquet_10/lineorder_flat";
-    //let parquet_path = "/Users/liliu/Desktop/export_profile";
+    let cities = ["a", "b", "c","d"];
+    let populations = [1, 2,3,4,5,6,7,8];
 
-    let execution_config = ExecutionConfig::new().with_optimizer_rules(vec![
-        Arc::new(ConstantFolding::new()),
-        Arc::new(CommonSubexprEliminate::new()),
-        Arc::new(EliminateLimit::new()),
-        Arc::new(ProjectionPushDown::new()),
-        Arc::new(FilterPushDown::new()),
-        Arc::new(SimplifyExpressions::new()),
-        Arc::new(LimitPushDown::new()),
-        //Arc::new(SingleDistinctToGroupBy::new()),
-    ]);
-    let execution_config = ExecutionConfig::new();
+    let matrix = cities.iter().zip(populations.windows(2));
 
-    let mut ctx = ExecutionContext::with_config(execution_config);
-
-    let result = ctx.register_parquet("lineorder_1", parquet_path).await?;
-    //let sql = r#"select sum(distinct lo_orderkey) as a from lineorder_flat;"#;
-    //let sql = r#"select count(distinct a.ee) from (select lo_orderpriority, count(distinct lo_orderkey) as ee from lineorder_flat group by lo_orderpriority)a"#;
-    //let sql = "select lo_orderpriority, count(distinct lo_orderkey), max(distinct lo_orderkey) from lineorder_flat group by lo_orderpriority order by lo_orderpriority";
-    //let sql = "select count(1),count(distinct distinct_id) from event";
-    //let sql = "select sum(revenue) from (SELECT sum(LO_EXTENDEDPRICE) AS revenue  FROM lineorder_1 group by S_ADDRESS) a";
-    //let sql = "select sum(revenue) from (SELECT sum(lo_extendedprice) AS revenue  FROM lineorder_1 group by lo_orderpriority) a";
-    //let sql = "select * from lineorder_1";
-    let sql = "SELECT lo_orderpriority,count(s_address) FROM lineorder_1 group by lo_orderpriority";
-    //let sql = "SELECT count(LO_EXTENDEDPRICE) FROM lineorder_1 group by S_ADDRESS";
-    //let sql = "SELECT count(S_ADDRESS) FROM lineorder_1 group by LO_ORDERPRIORITY";
-
-    let dt = Local::now();
-    let df = ctx.sql(sql).await?;
-    let logic_plan = df.to_logical_plan();
-    println!("---------------------------------------");
-    println!("sql : {}", sql);
-    println!("---------------------------------------");
-    println!("Display: {}", logic_plan.display_indent_schema());
-
-    let results: Vec<RecordBatch> = df.collect().await?;
-
-    print_batches(&results)?;
-
-    println!(
-        "usage millis: {}",
-        Local::now().timestamp_millis() - dt.timestamp_millis()
-    );
-
+    for (c, p) in matrix {
+        println!("{} ->:   {},{}", c, p[0],p[1]);
+    }
     Ok(())
 }
+
+// async fn runsql() {
+//     let parquet_path = "/Users/liliu/Desktop/lineorder_flat_2";
+//     //let parquet_path = "/Users/liliu/Downloads/parquet_10/lineorder_flat";
+//     //let parquet_path = "/Users/liliu/Desktop/export_profile";
+//
+//     let execution_config = ExecutionConfig::new().with_optimizer_rules(vec![
+//         Arc::new(ConstantFolding::new()),
+//         Arc::new(CommonSubexprEliminate::new()),
+//         Arc::new(EliminateLimit::new()),
+//         Arc::new(ProjectionPushDown::new()),
+//         Arc::new(FilterPushDown::new()),
+//         Arc::new(SimplifyExpressions::new()),
+//         Arc::new(LimitPushDown::new()),
+//         //Arc::new(SingleDistinctToGroupBy::new()),
+//     ]);
+//     let execution_config = ExecutionConfig::new();
+//
+//     let mut ctx = ExecutionContext::with_config(execution_config);
+//
+//     let result = ctx.register_parquet("lineorder_1", parquet_path).await?;
+//     //let sql = r#"select sum(distinct lo_orderkey) as a from lineorder_flat;"#;
+//     //let sql = r#"select count(distinct a.ee) from (select lo_orderpriority, count(distinct lo_orderkey) as ee from lineorder_flat group by lo_orderpriority)a"#;
+//     //let sql = "select lo_orderpriority, count(distinct lo_orderkey), max(distinct lo_orderkey) from lineorder_flat group by lo_orderpriority order by lo_orderpriority";
+//     //let sql = "select count(1),count(distinct distinct_id) from event";
+//     //let sql = "select sum(revenue) from (SELECT sum(LO_EXTENDEDPRICE) AS revenue  FROM lineorder_1 group by S_ADDRESS) a";
+//     //let sql = "select sum(revenue) from (SELECT sum(lo_extendedprice) AS revenue  FROM lineorder_1 group by lo_orderpriority) a";
+//     //let sql = "select * from lineorder_1";
+//     let sql = "SELECT lo_orderpriority,count(s_address) FROM lineorder_1 group by lo_orderpriority";
+//     //let sql = "SELECT count(LO_EXTENDEDPRICE) FROM lineorder_1 group by S_ADDRESS";
+//     //let sql = "SELECT count(S_ADDRESS) FROM lineorder_1 group by LO_ORDERPRIORITY";
+//
+//     let dt = Local::now();
+//     let df = ctx.sql(sql).await?;
+//     let logic_plan = df.to_logical_plan();
+//     println!("---------------------------------------");
+//     println!("sql : {}", sql);
+//     println!("---------------------------------------");
+//     println!("Display: {}", logic_plan.display_indent_schema());
+//
+//     let results: Vec<RecordBatch> = df.collect().await?;
+//
+//     print_batches(&results)?;
+//
+//     println!(
+//         "usage millis: {}",
+//         Local::now().timestamp_millis() - dt.timestamp_millis()
+//     );
+// }
