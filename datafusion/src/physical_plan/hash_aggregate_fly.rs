@@ -342,19 +342,16 @@ fn group_aggregate_batch(
     batch: RecordBatch,
     mut accumulators: Accumulators,
     aggregate_expressions: &[Vec<Arc<dyn PhysicalExpr>>],
-    mytimes : &[Time;14],
 ) -> Result<Accumulators> {
     // evaluate the grouping expressions
-    let guard = mytimes[0].timer();
+
     let group_values = evaluate(group_expr, &batch)?;
-    guard.done();
 
     // evaluate the aggregation expressions.
     // We could evaluate them after the `take`, but since we need to evaluate all
     // of them anyways, it is more performant to do it while they are together.
-    let guard = mytimes[1].timer();
+
     let aggr_input_values = evaluate_many(aggregate_expressions, &batch)?;
-    guard.done();
 
     // 1.1 construct the key from the group values
     // 1.2 construct the mapping key if it does not exist
@@ -365,15 +362,11 @@ fn group_aggregate_batch(
     // 1.1 Calculate the group keys for the group values
     let mut batch_hashes = vec![0; batch.num_rows()];
 
-    // let dt = Local::now();
-    let guard = mytimes[2].timer();
     create_hashes(&group_values, random_state, &mut batch_hashes)?;
-    guard.done();
 
     for (row, hash) in batch_hashes.into_iter().enumerate() {
         let Accumulators { map, accumulator_items,group_by_values, group_indices } = &mut accumulators;
 
-        let guard = mytimes[10].timer();
         let entry = map.get_mut(hash, |(_hash, group_idx)| {
             let group_state_c = &group_by_values[*group_idx];
             group_values
@@ -381,7 +374,6 @@ fn group_aggregate_batch(
                 .zip(group_state_c.iter())
                 .all(|(array, scalar)| scalar.eq_array(array, row))
         });
-        guard.done();
 
         match entry {
             // Existing entry for this group value
@@ -395,13 +387,11 @@ fn group_aggregate_batch(
             }
             //  1.2 Need to create new entry
             None => {
-
                 // Copy group values out of arrays into `ScalarValue`s
                 let col_group_by_values = group_values
                     .iter()
                     .map(|col| ScalarValue::try_from_array(col, row))
                     .collect::<Result<Vec<_>>>()?;
-
 
                 let group_idx = group_by_values.len();
                 group_by_values.push(col_group_by_values);
@@ -418,11 +408,7 @@ fn group_aggregate_batch(
         };
     }
 
-
-
-
     // Collect all indices + offsets based on keys in this vec
-    let guard = mytimes[11].timer();
     let mut batch_indices_cc: UInt32Builder = UInt32Builder::new(0);
     let mut offsets = vec![0];
     let mut offset_so_far = 0;
@@ -433,9 +419,6 @@ fn group_aggregate_batch(
         offsets.push(offset_so_far);
     }
     let batch_indices = batch_indices_cc.finish();
-    guard.done();
-
-    let guard = mytimes[12].timer();
     // `Take` all values based on indices into Arrays
     let values: Vec<Vec<Arc<dyn Array>>> = aggr_input_values
         .iter()
@@ -454,14 +437,12 @@ fn group_aggregate_batch(
             // 2.3
         })
         .collect();
-    guard.done();
 
     // 2.1 for each key in this batch
     // 2.2 for each aggregation
     // 2.3 `slice` from each of its arrays the keys' values
     // 2.4 update / merge the accumulator with the values
     // 2.5 clear indices
-    let guard3 = mytimes[13].timer();
     groups_with_rows.iter()
         .zip(offsets.windows(2))
         .try_for_each(|(group_idx, offsets)| {
@@ -483,7 +464,6 @@ fn group_aggregate_batch(
                     }
             })
         });
-    guard3.done();
     Ok(accumulators)
 }
 
@@ -512,9 +492,6 @@ async fn compute_grouped_hash_aggregate(
     let dt = Local::now();
     let mut i = 0;
 
-
-    let mytimes = [Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new(),Time::new()];
-
     while let Some(batch) = input.next().await {
         i +=1;
         let batch = batch?;
@@ -527,7 +504,6 @@ async fn compute_grouped_hash_aggregate(
             batch,
             accumulators,
             &aggregate_expressions,
-            &mytimes
         )
             .map_err(DataFusionError::into_arrow_external_error)?;
         timer.done();
@@ -537,10 +513,6 @@ async fn compute_grouped_hash_aggregate(
         Local::now().timestamp_millis() - dt.timestamp_millis(),
         i
     );
-    for i in 0..mytimes.len() {
-        println!("i : {}, time : {}", i , mytimes[i]);
-    }
-    println!("--------------------");
 
     let timer = elapsed_compute.timer();
     let batch = create_batch_from_map(&mode, &accumulators, group_expr.len(), &schema);
