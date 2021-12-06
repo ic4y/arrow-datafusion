@@ -519,7 +519,7 @@ impl DefaultPhysicalPlanner {
                         })
                         .collect::<Result<Vec<_>>>()?;
 
-                    let initial_aggr = Arc::new(HashAggregateExec::try_new(
+                    let initial_aggr = Arc::new(HashAggregateExecFly::try_new(
                         AggregateMode::Partial,
                         groups.clone(),
                         aggregates.clone(),
@@ -563,7 +563,7 @@ impl DefaultPhysicalPlanner {
                         (initial_aggr, AggregateMode::Final)
                     };
 
-                    Ok(Arc::new(HashAggregateExec::try_new(
+                    Ok(Arc::new(HashAggregateExecFly::try_new(
                         next_partition_mode,
                         final_group
                             .iter()
