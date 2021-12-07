@@ -588,7 +588,6 @@ struct Accumulators {
     // Accumulator state, keeps state of each group state
     accumulator_items: Vec<AccumulatorItem>,
 
-    /// State for each group
     //group_states: Vec<GroupState>,
     group_by_values: Vec<Vec<ScalarValue>>,
 
