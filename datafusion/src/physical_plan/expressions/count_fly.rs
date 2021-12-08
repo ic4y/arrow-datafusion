@@ -29,7 +29,9 @@ use arrow::{
     array::{ArrayRef, UInt64Array},
     datatypes::Field,
 };
+use arrow::array::Array;
 use chrono::prelude::*;
+use crate::physical_plan::expressions::is_null;
 
 use super::format_state_name;
 
@@ -158,6 +160,13 @@ impl AccumulatorFly for CountAccumulatorFly {
     fn update_batch(&mut self, index: usize, values: &[ArrayRef]) -> Result<()> {
         let array = &values[0];
         self.count[index] += (array.len() - array.data().null_count()) as u64;
+        Ok(())
+    }
+    fn update_batch_byindex(&mut self, values: &Vec<Arc<dyn Array>>,index: usize,start: usize,len : usize)-> Result<()>{
+        let array = &values[0];
+        self.count[index] += (start..len).filter(|idx| {
+            !ScalarValue::try_from_array(array, *idx).unwrap().is_null()
+        }).count() as u64;
         Ok(())
     }
 

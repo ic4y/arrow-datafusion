@@ -42,6 +42,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::{any::Any, pin::Pin};
+use arrow::array::Array;
 
 /// Trait for types that stream [arrow::record_batch::RecordBatch]
 pub trait RecordBatchStream: Stream<Item = ArrowResult<RecordBatch>> {
@@ -631,6 +632,7 @@ pub trait AccumulatorFly: Send + Sync + Debug {
             self.update(index, &v)
         })
     }
+    fn update_batch_byindex(&mut self, values: &Vec<Arc<dyn Array>>,index: usize,start: usize,len : usize)-> Result<()>;
 
     /// updates the accumulator's state from a vector of scalars.
     fn merge(&mut self, index: usize, states: &[ScalarValue]) -> Result<()>;
