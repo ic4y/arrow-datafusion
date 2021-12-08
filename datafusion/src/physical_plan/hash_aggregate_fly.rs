@@ -450,15 +450,15 @@ fn group_aggregate_batch(
             accumulators.accumulator_items.iter_mut()
                 .zip(values.iter())
                 .try_for_each(|(accumulator, aggr_array)| {
-                    let values = aggr_array
-                        .iter()
-                        .map(|array| {
-                            array.slice(offsets[0], offsets[1] - offsets[0])
-                        })
-                        .collect::<Vec<ArrayRef>>();
                     match mode {
-                        AggregateMode::Partial => accumulator.update_batch(*group_idx, &values),
+                        AggregateMode::Partial => accumulator.update_batch_byindex(aggr_array,*group_idx, offsets[0],offsets[1]),
                         AggregateMode::FinalPartitioned | AggregateMode::Final => {
+                            let values = aggr_array
+                                .iter()
+                                .map(|array| {
+                                    array.slice(offsets[0], offsets[1] - offsets[0])
+                                })
+                                .collect::<Vec<ArrayRef>>();
                             accumulator.merge_batch(*group_idx, &values)
                         }
                     }
